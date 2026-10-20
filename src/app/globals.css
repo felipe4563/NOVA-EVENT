@@ -1,26 +1,47 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* Paleta Nova Event, tomada del logo */
+@theme {
+  --color-vino-50: #fbf1f4;
+  --color-vino-100: #f4dde4;
+  --color-vino-200: #e7b9c6;
+  --color-vino-500: #9c3a58;
+  --color-vino-600: #7a2944;
+  --color-vino-700: #5f1f35;
+  --color-vino-800: #461827;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-rosa-100: #f6e6ea;
+  --color-rosa-300: #dfb2bd;
+  --color-rosa-400: #c9899a;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-agua-100: #e2efee;
+  --color-agua-300: #9fc6c4;
+  --color-agua-500: #5b9a99;
+  --color-agua-700: #3e7473;
+
+  --color-oro-300: #d9bf8f;
+  --color-oro-500: #b8935a;
+  --color-oro-700: #8c6c3c;
+
+  --color-crema: #fbf6f3;
+  --color-marfil: #f4eae6;
+  --color-tinta: #3a2a30;
+  --color-tinta-suave: #6e5a61;
+
+  --font-sans: var(--font-montserrat), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-cinzel), ui-serif, Georgia, serif;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-crema);
+  color: var(--color-tinta);
+}
+
+/* Fondo tipo mármol suave, como el del logo */
+.bg-marmol {
+  background-color: var(--color-crema);
+  background-image:
+    radial-gradient(ellipse 60% 50% at 0% 100%, color-mix(in oklab, var(--color-rosa-400) 35%, transparent), transparent 70%),
+    radial-gradient(ellipse 55% 45% at 100% 0%, color-mix(in oklab, var(--color-agua-500) 28%, transparent), transparent 70%),
+    radial-gradient(ellipse 40% 35% at 85% 95%, color-mix(in oklab, var(--color-rosa-300) 30%, transparent), transparent 70%);
 }

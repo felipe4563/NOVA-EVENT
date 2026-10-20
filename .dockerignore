@@ -1,0 +1,39 @@
+# Las imágenes pueden quedar públicas en ghcr.io: aquí nunca entran secretos ni datos.
+
+# Secretos y configuración local
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# SQL, respaldos y datos
+*.sql
+*.sql.gz
+*.dump
+*.bak
+*.backup
+backups/
+respaldos/
+uploads/
+drizzle/
+
+# Dependencias y builds locales
+node_modules
+.next
+npm-debug.log*
+
+# Herramientas y repo
+.git
+.github
+.vscode
+.claude
+.playwright-mcp
+Dockerfile
+docker-compose.yml
+deploy.sh
+README.md
+docs/
+
+# Logo original en alta (la app usa public/brand/logo.webp)
+public/brand/logo-original.png

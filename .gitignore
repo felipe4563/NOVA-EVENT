@@ -32,6 +32,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +40,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# playwright
+.playwright-mcp/
+
+# SQL: ni respaldos ni migraciones van a git (las tablas se crean desde src/db/schema.ts)
+*.sql
+/drizzle/
+
+# editor
+.vscode/

@@ -1,9 +1,14 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Genera un servidor mínimo en .next/standalone para la imagen de Docker.
+  output: "standalone",
   cacheComponents: true,
   partialPrefetching: true,
+  experimental: {
+    // Habilita forbidden() para responder 403 cuando falta un permiso.
+    authInterrupts: true,
+  },
   turbopack: {
     rules: {
       "*.css": {
