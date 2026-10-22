@@ -35,6 +35,11 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       ADMIN_NAME: ${ADMIN_NAME:-}
+      APP_TIMEZONE: ${APP_TIMEZONE:-America/La_Paz}
+      SEED_DEMO: ${SEED_DEMO:-false}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-}
+    volumes:
+      - uploads:/app/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -51,6 +56,10 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-nova}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-nova_event}
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      APP_TIMEZONE: ${APP_TIMEZONE:-America/La_Paz}
+    volumes:
+      # Fotos, planos y audios de la galería: incluir en los respaldos
+      - uploads:/app/uploads
     ports:
       - "${APP_PORT:-3000}:3000"
     depends_on:
@@ -59,3 +68,4 @@ services:
 
 volumes:
   db_data:
+  uploads:

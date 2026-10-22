@@ -18,6 +18,8 @@ export type CurrentUser = {
   role: { key: string; name: string; kind: "staff" | "provider" | "client" };
   fullAccess: boolean;
   permissions: ReadonlySet<string>;
+  /** Solo cuentas de proveedor: el proveedor al que pertenece. */
+  supplierId: string | null;
 };
 
 function hashToken(token: string) {
@@ -72,6 +74,7 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
       name: users.name,
       email: users.email,
       active: users.active,
+      supplierId: users.supplierId,
       roleId: roles.id,
       roleKey: roles.key,
       roleName: roles.name,
@@ -100,6 +103,7 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
     role: { key: row.roleKey, name: row.roleName, kind: row.roleKind },
     fullAccess: row.fullAccess,
     permissions: new Set(perms.map((p) => p.permission)),
+    supplierId: row.roleKind === "provider" ? row.supplierId : null,
   };
 });
 
@@ -114,6 +118,16 @@ export async function requireUser() {
 export async function requirePermission(permission: Permission) {
   const user = await requireUser();
   if (!hasPermission(user, permission)) forbidden();
+  return user;
+}
+
+/**
+ * Como requirePermission, pero además solo para el equipo de Nova Event:
+ * proveedores y clientes nunca entran, aunque su rol tuviera el permiso.
+ */
+export async function requireEquipo(permission: Permission) {
+  const user = await requirePermission(permission);
+  if (user.role.kind !== "staff") forbidden();
   return user;
 }
 

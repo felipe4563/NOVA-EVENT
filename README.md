@@ -54,7 +54,37 @@ npm run dev               # http://localhost:3000
 |---|---|
 | `npm run db:push` | Crea o actualiza las tablas según `src/db/schema.ts` |
 | `npm run db:seed` | Crea los roles base y el administrador |
+| `npm run db:demo` | Carga los datos de ejemplo (solo con `SEED_DEMO=true`) |
+| `npm run db:demo -- --borrar` | Quita los datos de ejemplo |
 | `npm run db:studio` | Abre un visor de la base de datos |
+
+### Archivos subidos (galería de proveedores y logos)
+
+Las fotos, planos, fotos 360° y audios se guardan en el volumen de Docker `uploads` (en la app: `/app/uploads`; con `npm run dev`: la carpeta `uploads/`, que no se sube a git). Los videos no se suben: se guarda el enlace de YouTube, Vimeo, TikTok o Instagram.
+
+Los logos de la empresa (*Administración → Empresa*) también van ahí, en `uploads/empresa/`. Se sirven en `/marca/logo-claro.webp`, `/marca/logo-oscuro.webp` y `/marca/icono-*.png`; si no se subió ninguno, se usan los originales de `public/`. El logo claro genera los íconos de la app y es el que usan los PDF.
+
+**Respaldo:** junto con la base de datos, respalda también este volumen:
+
+```bash
+docker run --rm -v nova-event_uploads:/datos -v "$PWD":/respaldo alpine tar czf /respaldo/uploads-$(date +%F).tar.gz -C /datos .
+```
+
+### Datos de ejemplo y base de producción
+
+- **En tu PC** pon `SEED_DEMO=true` en `.env`: al levantar Docker se cargan proveedores, agendas y cuentas de ejemplo (todas terminan en `@demo.test`, contraseña `Demo12345` o la de `DEMO_PASSWORD`). No se duplican si ya están.
+- **En producción** deja `SEED_DEMO=false` (o sin poner): la base arranca vacía, solo con los roles, las categorías y tu administrador.
+- Para empezar de cero en tu PC: `docker compose down -v && docker compose up -d` (borra **toda** la base local).
+
+## Cotizaciones
+
+Módulo para armar propuestas para los clientes (`/panel/cotizaciones`). Cada cotización (`COT-AAAA-NNNN`) tiene una o varias opciones; cada opción suma los paquetes de proveedores y un paquete de Nova Event (Esencia, Inspiración o Prestigio), con una barra frente al presupuesto del cliente y avisos si un proveedor tiene ocupado el día.
+
+- **Propuesta y enlace público:** desde la cotización se presenta la propuesta y se activa un enlace `/p/<código largo>` que se abre sin iniciar sesión. Se puede desactivar o regenerar. El cliente nunca ve notas internas, teléfonos ni correos de proveedores; el presupuesto solo si se marca para mostrarlo.
+- **PDF:** la propuesta se descarga en PDF desde el mismo enlace o desde el panel.
+- **Aceptar y confirmar:** al aceptar una opción se congela (cambios posteriores en catálogos no la alteran) y cada proveedor queda «Por confirmar»; al confirmarlo se reserva su día en su calendario.
+- **Permisos:** `cotizaciones.ver`, `.crear`, `.editar` y `.eliminar` (solo equipo; se asignan en Roles). Los paquetes y la capacidad de cada proveedor requieren `proveedores.editar`. El rol Coordinador no los trae por defecto: sin ellos todo el módulo da 403.
+- **Ejemplos (`SEED_DEMO=true`):** se cargan paquetes para los proveedores de ejemplo y tres cotizaciones: *Boda Rojas & Pérez* (borrador con dos opciones), *Quinceaños de Valeria* (enviada, con enlace activo) y *Boda García & Mendoza* (aceptada, con 2 de 5 proveedores confirmados). `npm run db:demo -- --borrar` las quita junto con los días que reservaron.
 
 ## Estructura
 

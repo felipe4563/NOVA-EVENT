@@ -35,5 +35,5 @@ deploy.sh
 README.md
 docs/
 
-# Logo original en alta (la app usa public/brand/logo.webp)
-public/brand/logo-original.png
+# Logos originales en alta (la app usa las versiones .webp de public/brand)
+assets/

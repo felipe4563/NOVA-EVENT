@@ -50,3 +50,12 @@ next-env.d.ts
 
 # editor
 .vscode/
+
+# Archivos subidos (galería)
+/uploads/
+
+# Documentos de diseño y planes: solo locales, nunca al repositorio
+/docs/
+
+# Bocetos y notas de trabajo locales
+/.superpowers/

@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* El modo oscuro lo activa el atributo data-theme="dark" en <html> (ver src/lib/tema.ts). */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 /* Paleta Nova Event, tomada del logo */
 @theme {
   --color-vino-50: #fbf1f4;
@@ -23,25 +26,137 @@
   --color-oro-500: #b8935a;
   --color-oro-700: #8c6c3c;
 
-  --color-crema: #fbf6f3;
-  --color-marfil: #f4eae6;
-  --color-tinta: #3a2a30;
-  --color-tinta-suave: #6e5a61;
+  --color-carbon: #272c30;
 
   --font-sans: var(--font-montserrat), ui-sans-serif, system-ui, sans-serif;
   --font-display: var(--font-cinzel), ui-serif, Georgia, serif;
 }
 
-body {
-  background: var(--color-crema);
-  color: var(--color-tinta);
+/*
+ * Colores por rol. Las pantallas usan estos (bg-fondo, text-texto, bg-primario...)
+ * y así funcionan solas en modo claro y oscuro.
+ */
+@theme inline {
+  --color-fondo: var(--fondo);
+  --color-superficie: var(--superficie);
+  --color-superficie-2: var(--superficie-2);
+  --color-borde: var(--borde);
+  --color-borde-campo: var(--borde-campo);
+  --color-texto: var(--texto);
+  --color-texto-suave: var(--texto-suave);
+  --color-titulo: var(--titulo);
+  --color-acento: var(--acento);
+  --color-enlace: var(--enlace);
+  --color-primario: var(--primario);
+  --color-primario-hover: var(--primario-hover);
+  --color-primario-texto: var(--primario-texto);
+  --color-activo: var(--activo);
+  --color-anillo: var(--anillo);
+  --color-error: var(--error);
+
+  /* Menú lateral (tarjeta oscura en ambos modos) */
+  --color-menu: var(--menu);
+  --color-menu-borde: var(--menu-borde);
+  --color-menu-hover: var(--menu-hover);
+  --color-menu-texto: var(--menu-texto);
+  --color-menu-suave: var(--menu-suave);
+  --color-menu-titulo: var(--menu-titulo);
+  --color-menu-activo: var(--menu-activo);
+  --color-menu-activo-texto: var(--menu-activo-texto);
 }
 
-/* Fondo tipo mármol suave, como el del logo */
-.bg-marmol {
-  background-color: var(--color-crema);
+:root {
+  color-scheme: light;
+  --fondo: #fbf6f3;
+  --superficie: #ffffff;
+  --superficie-2: #fbf6f3;
+  --borde: #f4eae6;
+  --borde-campo: #dfb2bd;
+  --texto: #3a2a30;
+  --texto-suave: #6e5a61;
+  --titulo: #7a2944;
+  --acento: #8c6c3c;
+  --enlace: #3e7473;
+  --primario: #7a2944;
+  --primario-hover: #5f1f35;
+  --primario-texto: #ffffff;
+  --activo: #fbf1f4;
+  --anillo: #f4dde4;
+  --error: #9c3a58;
+  --menu: #ffffff;
+  --menu-borde: #f0e4e0;
+  --menu-hover: #fbf1f4;
+  --menu-texto: #3a2a30;
+  --menu-suave: #7a666d;
+  --menu-titulo: #7a2944;
+  --menu-activo: #7a2944;
+  --menu-activo-texto: #ffffff;
+  /* Manchas del fondo tipo mármol */
+  --marmol-1: color-mix(in oklab, #c9899a 35%, transparent);
+  --marmol-2: color-mix(in oklab, #5b9a99 28%, transparent);
+  --marmol-3: color-mix(in oklab, #dfb2bd 30%, transparent);
+}
+
+/* Fondo carbón igual al del logo oscuro; textos en rosa dorado como las letras del logo. */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --fondo: #272c30;
+  --superficie: #30363b;
+  --superficie-2: #353b41;
+  --borde: #3d444a;
+  --borde-campo: #56494f;
+  --texto: #f2e4de;
+  --texto-suave: #b8a9a6;
+  --titulo: #ecc9bb;
+  --acento: #d9bf8f;
+  --enlace: #9fc6c4;
+  --primario: #b04a6b;
+  --primario-hover: #c45a7c;
+  --primario-texto: #ffffff;
+  --activo: #4a3540;
+  --anillo: #5a3442;
+  --error: #e7a0b4;
+  --menu: #31373c;
+  --menu-borde: #41484e;
+  --menu-hover: #3b4248;
+  --menu-texto: #ede1dc;
+  --menu-suave: #ab9d9b;
+  --menu-titulo: #ecc9bb;
+  --menu-activo: #ecc9bb;
+  --menu-activo-texto: #272c30;
+  --marmol-1: color-mix(in oklab, #9c3a58 22%, transparent);
+  --marmol-2: color-mix(in oklab, #3e7473 24%, transparent);
+  --marmol-3: color-mix(in oklab, #7a2944 14%, transparent);
+}
+
+body {
+  background: var(--fondo);
+  color: var(--texto);
+}
+
+/* Fondo tipo mármol suave, como el del logo. Como utilidad, acepta variantes (lg:bg-none). */
+@utility bg-marmol {
+  background-color: var(--fondo);
   background-image:
-    radial-gradient(ellipse 60% 50% at 0% 100%, color-mix(in oklab, var(--color-rosa-400) 35%, transparent), transparent 70%),
-    radial-gradient(ellipse 55% 45% at 100% 0%, color-mix(in oklab, var(--color-agua-500) 28%, transparent), transparent 70%),
-    radial-gradient(ellipse 40% 35% at 85% 95%, color-mix(in oklab, var(--color-rosa-300) 30%, transparent), transparent 70%);
+    radial-gradient(ellipse 60% 50% at 0% 100%, var(--marmol-1), transparent 70%),
+    radial-gradient(ellipse 55% 45% at 100% 0%, var(--marmol-2), transparent 70%),
+    radial-gradient(ellipse 40% 35% at 85% 95%, var(--marmol-3), transparent 70%);
+}
+
+/* Barra de desplazamiento fina (menú lateral) */
+@utility barra-fina {
+  scrollbar-width: thin;
+  scrollbar-color: var(--borde) transparent;
+}
+
+/* Mármol de los folletos de paquetes, siempre claro (propuesta para los novios, aunque el panel esté en oscuro). */
+@utility bg-marmol-claro {
+  background-color: #f9f2ef;
+  background-image:
+    linear-gradient(118deg, transparent 38%, rgb(255 255 255 / 0.55) 46%, transparent 54%),
+    linear-gradient(32deg, transparent 58%, rgb(184 147 90 / 0.12) 62%, transparent 66%),
+    radial-gradient(ellipse 70% 55% at 0% 100%, rgb(201 137 154 / 0.5), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 100% 0%, rgb(91 154 153 / 0.42), transparent 70%),
+    radial-gradient(ellipse 45% 40% at 92% 92%, rgb(223 178 189 / 0.55), transparent 70%),
+    radial-gradient(ellipse 40% 32% at 8% 6%, rgb(159 198 196 / 0.45), transparent 70%);
 }
