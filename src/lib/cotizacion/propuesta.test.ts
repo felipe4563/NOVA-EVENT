@@ -5,6 +5,7 @@ import {
   codigoCotizacion,
   congelarLinea,
   esTokenValido,
+  estaCongelada,
   leerLineaCongelada,
   leerVersionCongelada,
   listaIncluye,
@@ -74,6 +75,12 @@ describe("leerVersionCongelada", () => {
   });
 });
 
+describe("estaCongelada", () => {
+  it("aceptada y cancelada sí; las demás no", () => {
+    expect(["accepted", "cancelled", "draft", "sent", "rejected"].map(estaCongelada)).toEqual([true, true, false, false, false]);
+  });
+});
+
 describe("versionesVisibles", () => {
   const vs = [
     { id: "a", showInProposal: true },
@@ -89,6 +96,10 @@ describe("versionesVisibles", () => {
   it("aceptada sin versión encontrada: ninguna", () => {
     expect(versionesVisibles({ status: "accepted", acceptedVersionId: null }, vs)).toEqual([]);
     expect(versionesVisibles({ status: "accepted", acceptedVersionId: "x" }, vs)).toEqual([]);
+  });
+  it("cancelada: solo la que se había aceptado (precios congelados)", () => {
+    expect(versionesVisibles({ status: "cancelled", acceptedVersionId: "b" }, vs).map((v) => v.id)).toEqual(["b"]);
+    expect(versionesVisibles({ status: "cancelled", acceptedVersionId: null }, vs)).toEqual([]);
   });
   it("una aceptada anterior no cuenta si ya no está aceptada", () => {
     expect(versionesVisibles({ status: "draft", acceptedVersionId: "b" }, vs).map((v) => v.id)).toEqual(["a", "c"]);

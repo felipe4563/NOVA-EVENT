@@ -37,6 +37,10 @@ function leer(f: FormData) {
 
 const esUuid = (v: string) => z.uuid().safeParse(v).success;
 
+/** Una aceptada o cancelada ya no se modifica (la cancelada queda como registro). */
+const ACEPTADA = "La cotización ya fue aceptada y no se puede modificar.";
+const CANCELADA = "La cotización está cancelada: queda como registro y no se puede modificar.";
+
 /** Un total por persona puede pasar lo que cabe en la base (integer): se rechaza sin escribir. */
 const LINEA_GRANDE = "El total de la línea es demasiado grande";
 
@@ -158,7 +162,8 @@ export async function actualizarDatos(id: string, _prev: EstadoCotizacion, formD
     .from(quotes)
     .where(eq(quotes.id, id));
   if (!actual) return { error: "Esta cotización ya no existe.", valores };
-  if (actual.status === "accepted") return { error: "La cotización ya fue aceptada y no se puede modificar.", valores };
+  if (actual.status === "accepted") return { error: ACEPTADA, valores };
+  if (actual.status === "cancelled") return { error: CANCELADA, valores };
 
   const { datos, errores } = await validar(valores, actual.validUntil);
   const ownerId = valores.responsable || actual.ownerId; // vacío = sin cambio
@@ -170,7 +175,7 @@ export async function actualizarDatos(id: string, _prev: EstadoCotizacion, formD
   // Con la cotización bloqueada: primero se calculan las líneas y, si alguna no cabe, no se escribe nada.
   const r = await db.transaction(async (tx) => {
     const [f] = await tx.select({ status: quotes.status, guests: quotes.guests }).from(quotes).where(eq(quotes.id, id)).for("update");
-    if (!f || f.status === "accepted") return "no";
+    if (!f || f.status === "accepted" || f.status === "cancelled") return "no";
     const cambioInvitados = invitados !== f.guests;
     let cambios: { id: string; total: number }[] = [];
     if (cambioInvitados) {
@@ -196,7 +201,7 @@ export async function actualizarDatos(id: string, _prev: EstadoCotizacion, formD
     for (const l of cambios) await tx.update(quoteItems).set({ totalCents: l.total }).where(eq(quoteItems.id, l.id));
     return { cambioInvitados };
   });
-  if (r === "no") return { error: "Esta cotización ya no existe o ya fue aceptada, y no se puede modificar.", valores };
+  if (r === "no") return { error: "Esta cotización ya no existe, o fue aceptada o cancelada, y no se puede modificar.", valores };
   if (r === "grande") return { errores: { invitados: `${LINEA_GRANDE} con estos invitados.` }, valores };
   const { cambioInvitados } = r;
 
@@ -220,11 +225,10 @@ type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Contexto = { quoteId: string; guests: number };
 type Resultado<T> = { ok: true; valor: T; quoteId: string } | { ok: false; error: string };
 
-const ACEPTADA = "La cotización ya fue aceptada y no se puede modificar.";
 
 /**
  * Ejecuta una escritura con la fila de la cotización bloqueada (FOR UPDATE),
- * así nadie la acepta a la vez. Rechaza si no existe, si la versión o línea no es suya, o si ya está aceptada.
+ * así nadie la acepta a la vez. Rechaza si no existe, si la versión o línea no es suya, o si ya está aceptada o cancelada.
  */
 async function enCotizacion<T>(
   donde: { quoteId: string } | { versionId: string } | { itemId: string },
@@ -254,6 +258,7 @@ async function enCotizacion<T>(
               .for("update", { of: quotes });
     if (!f) return { ok: false, error: noExiste };
     if (f.status === "accepted") return { ok: false, error: ACEPTADA };
+    if (f.status === "cancelled") return { ok: false, error: CANCELADA };
     const valor = await fn(tx, { quoteId: f.quoteId, guests: f.guests ?? 0 });
     return { ok: true, valor, quoteId: f.quoteId };
   });

@@ -2,8 +2,9 @@ import "server-only";
 import { and, asc, desc, eq, exists, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { paymentInstallments, paymentMovements, quoteAdjustments, quoteItems, quoteVersions, quotes, suppliers, users } from "@/db/schema";
-import { leerLineaCongelada, leerVersionCongelada } from "@/lib/cotizacion/propuesta";
-import { estadoCuotas, totalACobrar, type CuotaConEstado, type EstadoCuota } from "@/lib/saldos/plan";
+import { ESTADOS_CONGELADOS, leerLineaCongelada } from "@/lib/cotizacion/propuesta";
+import { datosEmpresa } from "@/lib/empresa";
+import { adelantoVencido, estadoCuotas, totalCongelado, type CuotaConEstado, type EstadoCuota } from "@/lib/saldos/plan";
 
 type CuotaBase = { id: string; nombre: string; monto: number; vence: string };
 type Cuota = CuotaConEstado<CuotaBase>;
@@ -24,6 +25,8 @@ export type MovimientoCuenta = {
 export type ProveedorCuenta = {
   itemId: string;
   proveedor: string;
+  /** El proveedor se borró del catálogo: la línea conserva su nombre congelado, su plan y sus pagos. */
+  eliminado: boolean;
   etiqueta: string;
   paga: "nova" | "client";
   confirmacion: (typeof quoteItems.$inferSelect)["confirmation"];
@@ -94,7 +97,7 @@ async function cuentas(ids: string[], hoy: string): Promise<Map<string, CuentaEv
       acceptedVersionId: quotes.acceptedVersionId,
     })
     .from(quotes)
-    .where(and(inArray(quotes.id, ids), inArray(quotes.status, ["accepted", "cancelled"])));
+    .where(and(inArray(quotes.id, ids), inArray(quotes.status, [...ESTADOS_CONGELADOS])));
   if (!cotizaciones.length) return out;
   const idsOk = cotizaciones.map((c) => c.id);
   const versiones = cotizaciones.flatMap((c) => (c.acceptedVersionId ? [c.acceptedVersionId] : []));
@@ -157,9 +160,9 @@ async function cuentas(ids: string[], hoy: string): Promise<Map<string, CuentaEv
     const movsQ = movs.filter((x) => x.m.quoteId === c.id);
     const pareja = movsQ.filter((x) => x.m.itemId === null).map(movimiento);
 
-    const total = totalACobrar(
-      leerVersionCongelada(c.acceptedVersionId ? verPorId.get(c.acceptedVersionId) : null)?.precio ?? null,
-      propias.map((l) => ({ total: leerLineaCongelada(l.frozen)?.total ?? 0, paga: l.supplierId ? l.payer : ("nova" as const) })),
+    const total = totalCongelado(
+      c.acceptedVersionId ? verPorId.get(c.acceptedVersionId) : null,
+      propias,
       ajustesQ.filter((a) => !a.voidedAt).map((a) => a.amountCents),
     );
     const cobrado = neto(pareja, "cobro", "devolucion");
@@ -170,18 +173,22 @@ async function cuentas(ids: string[], hoy: string): Promise<Map<string, CuentaEv
       hoy,
     ).cuotas;
 
-    const proveedores: ProveedorCuenta[] = propias
-      .filter((l) => l.supplierId)
-      .map((l) => {
-        const f = leerLineaCongelada(l.frozen);
-        const totalLinea = f?.total ?? 0;
-        const movsL = movsQ.filter((x) => x.m.itemId === l.id).map(movimiento);
-        const pagado = neto(movsL, "pago_proveedor", "devolucion_proveedor");
-        const cuotasL = l.payer === "nova" ? cuotasBD.filter((q) => q.itemId === l.id).map(cuota) : [];
-        const conEstado = estadoCuotas(cuotasL, pagado, hoy).cuotas;
-        return {
+    // Líneas de proveedor: las que tuvieron proveedor al aceptar (confirmación) o que ya tienen plan o movimientos.
+    // No se usa `supplierId`: si se borra el proveedor queda en null, y sus pagos no deben desaparecer.
+    const proveedores: ProveedorCuenta[] = propias.flatMap((l) => {
+      const cuotasBDL = cuotasBD.filter((q) => q.itemId === l.id);
+      const movsL = movsQ.filter((x) => x.m.itemId === l.id).map(movimiento);
+      if (l.confirmation === null && !cuotasBDL.length && !movsL.length) return [];
+      const f = leerLineaCongelada(l.frozen);
+      const totalLinea = f?.total ?? 0;
+      const pagado = neto(movsL, "pago_proveedor", "devolucion_proveedor");
+      const cuotasL = l.payer === "nova" ? cuotasBDL.map(cuota) : [];
+      const conEstado = estadoCuotas(cuotasL, pagado, hoy).cuotas;
+      return [
+        {
           itemId: l.id,
           proveedor: f?.proveedor ?? l.label,
+          eliminado: l.supplierId === null,
           etiqueta: f?.etiqueta ?? l.label,
           paga: l.payer,
           confirmacion: l.confirmation,
@@ -191,9 +198,10 @@ async function cuentas(ids: string[], hoy: string): Promise<Map<string, CuentaEv
           condicion: condicionDe(l),
           cuotas: conEstado,
           movimientos: movsL,
-          adelantoUrgente: !cancelada && conEstado.some((q) => q.nombre === "Adelanto" && q.falta > 0 && q.vence <= hoy),
-        };
-      });
+          adelantoUrgente: !cancelada && adelantoVencido(conEstado, hoy),
+        },
+      ];
+    });
     const pagadoProveedores = proveedores.reduce((s, p) => s + p.pagado, 0);
     // En una cancelada las cuotas no son deuda.
     const faltaProveedores = cancelada ? 0 : proveedores.reduce((s, p) => s + p.cuotas.reduce((t, q) => t + q.falta, 0), 0);
@@ -235,7 +243,41 @@ export async function cuentaEvento(quoteId: string, hoy: string): Promise<Cuenta
   return (await cuentas([quoteId], hoy)).get(quoteId) ?? null;
 }
 
-export type FiltroSaldos = { q: string; estado: "" | "vencidos" | "por_vencer" | "al_dia" | "pagado" | "canceladas" };
+/**
+ * Lo único que ve la pareja en «Mis pagos». Tipo propio (no un subconjunto de `CuentaEvento`) y armado campo por campo:
+ * nunca pagos a proveedores, montos a pagar, comprobantes, notas, quién registró ni lo que queda para Nova Event.
+ */
+export type CuentaPublica = {
+  total: number;
+  cobrado: number;
+  devuelto: number;
+  cancelada: boolean;
+  cuotas: { nombre: string; monto: number; vence: string; falta: number; estado: EstadoCuota }[];
+  ajustes: { concepto: string; monto: number }[];
+  recibos: { codigo: string; fecha: string; monto: number }[];
+  /** Líneas que la pareja paga directo: proveedor congelado y total congelado de la línea. */
+  directos: { proveedor: string; monto: number }[];
+  politica: string | null;
+};
+
+/** Cuenta para el enlace público; null si no es aceptada/cancelada o si se apagó «Mostrar pagos en el enlace». */
+export async function cuentaPublica(quoteId: string, hoy: string): Promise<CuentaPublica | null> {
+  const k = await cuentaEvento(quoteId, hoy);
+  if (!k || !k.cotizacion.showPayments) return null;
+  return {
+    total: k.total,
+    cobrado: k.cobrado,
+    devuelto: k.devuelto,
+    cancelada: k.cotizacion.status === "cancelled",
+    cuotas: k.cuotas.map((q) => ({ nombre: q.nombre, monto: q.monto, vence: q.vence, falta: q.falta, estado: q.estado })),
+    ajustes: k.ajustes.filter((a) => !a.anulado).map((a) => ({ concepto: a.concepto, monto: a.monto })),
+    recibos: k.movimientos.flatMap((m) => (m.kind === "cobro" && !m.anulado && m.recibo ? [{ codigo: m.recibo, fecha: m.fecha, monto: m.monto }] : [])),
+    directos: k.proveedores.filter((p) => p.paga === "client").map((p) => ({ proveedor: p.proveedor, monto: p.totalLinea })),
+    politica: (await datosEmpresa()).politica,
+  };
+}
+
+export type FiltroSaldos ={ q: string; estado: "" | "vencidos" | "por_vencer" | "al_dia" | "pagado" | "canceladas" };
 export type FilaSaldo = {
   id: string;
   code: string;

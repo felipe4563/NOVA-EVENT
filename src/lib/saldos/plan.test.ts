@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { ajustarAlTotal, correrFechas, estadoCuotas, proponerPlanPareja, proponerPlanProveedor, repartirFaltante, totalACobrar } from "./plan";
+import {
+  adelantoVencido,
+  ajustarAlTotal,
+  correrFechas,
+  estadoCuotas,
+  proponerPlanPareja,
+  proponerPlanProveedor,
+  repartirFaltante,
+  totalACobrar,
+  totalCongelado,
+} from "./plan";
 
 const HOY = "2026-10-21";
 
@@ -165,5 +175,34 @@ describe("totalACobrar", () => {
   });
   it("sin paquete", () => {
     expect(totalACobrar(null, lineas, [-50000])).toBe(950000);
+  });
+});
+
+describe("totalCongelado", () => {
+  const version = { nombre: "Oro", precio: 400000, frase: null, incluye: [] };
+  const linea = (total: number) => ({ proveedor: "X", paquete: null, etiqueta: "X", total });
+  it("usa payer tal cual: una línea que paga la pareja no entra aunque su proveedor se haya borrado", () => {
+    const lineas = [
+      { frozen: linea(1000000), payer: "nova" as const },
+      { frozen: linea(410000), payer: "client" as const },
+    ];
+    expect(totalCongelado(version, lineas, [-50000])).toBe(1350000);
+  });
+  it("sin copias congeladas válidas cuenta 0", () => {
+    expect(totalCongelado(null, [{ frozen: null, payer: "nova" }], [])).toBe(0);
+  });
+});
+
+describe("adelantoVencido", () => {
+  it("la primera cuota vence hoy o antes y le falta algo", () => {
+    expect(adelantoVencido([{ vence: HOY, falta: 100 }, { vence: "2027-01-01", falta: 100 }], HOY)).toBe(true);
+    expect(adelantoVencido([{ vence: "2026-01-01", falta: 100 }], HOY)).toBe(true);
+  });
+  it("no por el nombre: solo cuenta la primera", () => {
+    expect(adelantoVencido([{ vence: HOY, falta: 0 }, { vence: "2026-01-01", falta: 100 }], HOY)).toBe(false);
+  });
+  it("futura o sin cuotas: no", () => {
+    expect(adelantoVencido([{ vence: "2099-01-01", falta: 100 }], HOY)).toBe(false);
+    expect(adelantoVencido([], HOY)).toBe(false);
   });
 });

@@ -6,7 +6,7 @@ import { eventTypes, novaPackages, quoteItems, quoteVersions, quotes } from "@/d
 import { requireEquipo } from "@/lib/auth";
 import { totalesVersion } from "@/lib/cotizacion/calculo";
 import { formatoBs } from "@/lib/cotizacion/dinero";
-import { leerLineaCongelada, leerVersionCongelada } from "@/lib/cotizacion/propuesta";
+import { estaCongelada, leerLineaCongelada, leerVersionCongelada } from "@/lib/cotizacion/propuesta";
 import { fechaCorta, hoy as hoyFn } from "@/lib/fechas";
 import { hasPermission } from "@/lib/permissions";
 import { IconoAccion } from "@/components/iconos";
@@ -217,13 +217,13 @@ export default async function CotizacionesPage({ searchParams }: PageProps<"/pan
 
 /**
  * Total de la versión principal de cada cotización (id de cotización → centavos):
- * la aceptada con su copia congelada; si no, la primera por orden.
+ * la aceptada (también en una cancelada) con su copia congelada; si no, la primera por orden.
  */
 async function totalesPrincipales(cotizaciones: { id: string; status: string; acceptedVersionId: string | null }[]) {
   const out = new Map<string, number>();
   const ids = cotizaciones.map((c) => c.id);
   if (!ids.length) return out;
-  const aceptadas = new Map(cotizaciones.flatMap((c) => (c.status === "accepted" && c.acceptedVersionId ? [[c.id, c.acceptedVersionId] as const] : [])));
+  const aceptadas = new Map(cotizaciones.flatMap((c) => (estaCongelada(c.status) && c.acceptedVersionId ? [[c.id, c.acceptedVersionId] as const] : [])));
   const versiones = await db
     .select()
     .from(quoteVersions)

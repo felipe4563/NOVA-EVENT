@@ -3,6 +3,9 @@ import { notFound } from "next/navigation";
 import { IconoAccion } from "@/components/iconos";
 import { PropuestaRevista } from "@/app/panel/cotizaciones/_propuesta/propuesta";
 import { cotizacionCompartida, datosPropuesta } from "@/app/panel/cotizaciones/datos";
+import { cuentaPublica } from "@/app/panel/saldos/datos";
+import { hoy as hoyFn } from "@/lib/fechas";
+import { MisPagos, hayMisPagos } from "./mis-pagos";
 
 // Título neutro (sin el nombre de los clientes) y fuera de los buscadores.
 export const metadata: Metadata = {
@@ -22,9 +25,21 @@ export default async function PropuestaPublicaPage({ params }: PageProps<"/p/[to
   const p = await datosPropuesta(c.id, (clave) => `/p/${token}/archivo/${clave}`);
   if (!p) notFound();
 
+  const hoy = await hoyFn();
+  const cuenta = await cuentaPublica(c.id, hoy);
+  const misPagos = hayMisPagos(cuenta) ? cuenta : null;
+
   return (
     <main className="flex-1 bg-marmol-claro [color-scheme:light]">
+      {misPagos && (
+        <p className="bg-marmol-claro px-4 pt-4 text-center">
+          <a href="#mis-pagos" className="text-sm font-semibold text-vino-600 underline decoration-oro-500 underline-offset-4 hover:text-vino-800">
+            Ver mis pagos ↓
+          </a>
+        </p>
+      )}
       <PropuestaRevista p={p} />
+      {misPagos && <MisPagos c={misPagos} token={token} hoy={hoy} />}
       {/* Para guardarla o reenviarla por WhatsApp. */}
       <div className="bg-marmol-claro px-4 pb-10 text-center">
         <a

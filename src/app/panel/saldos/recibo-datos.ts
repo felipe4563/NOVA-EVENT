@@ -45,7 +45,8 @@ export async function datosRecibo(quoteId: string, codigo: string): Promise<(Dat
     referencia: m.reference,
     total: cuenta.total,
     pagado,
-    saldo,
+    // En un evento cancelado no queda nada por pagar: el recibo no muestra saldo.
+    saldo: c.status === "cancelled" ? null : saldo,
     recibidoPor: fila.recibidoPor,
     anulado: m.voidedAt !== null,
     empresa: contactoEmpresa(await datosEmpresa(), `Hola, les escribo por el recibo ${codigo}`),

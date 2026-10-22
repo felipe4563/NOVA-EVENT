@@ -7,9 +7,10 @@
  * Las cuentas de ejemplo terminan en @demo.test y usan la contraseña DEMO_PASSWORD (por defecto Demo12345).
  */
 import bcrypt from "bcryptjs";
-import { eq, inArray, like } from "drizzle-orm";
+import { and, eq, inArray, isNull, like } from "drizzle-orm";
 import { borrarCarpetaProveedor } from "../lib/archivos";
 import { borrarCotizacionesDemo, cargarCotizacionesDemo } from "./demo-cotizaciones";
+import { borrarSaldosDemo, cargarSaldosDemo } from "./demo-saldos";
 import { cargarGalerias } from "./demo-galeria";
 import { db } from "./index";
 import { companySettings, roles, supplierBusy, supplierCategories, suppliers, users } from "./schema";
@@ -228,11 +229,28 @@ const EMPRESA_DEMO = {
   instagram: "@nova.event.demo",
   facebook: "facebook.com/novaevent.demo",
   tiktok: "@nova.event.demo",
+  cancellationPolicy: "Si el evento se cancela con más de 60 días de anticipación se devuelve el 70 % de lo pagado; entre 60 y 30 días, el 50 %; con menos de 30 días no hay devolución.",
 };
+
+/** Condiciones de pago de algunos proveedores: adelanto en % y días del resto respecto al evento (negativo = antes). */
+const CONDICIONES_PAGO: Record<string, { advancePct: number; balanceDays: number; paymentTerms?: string }> = {
+  "Hacienda Los Sauces": { advancePct: 50, balanceDays: -7, paymentTerms: "50 % al confirmar y el resto 7 días antes del evento." },
+  "DJ Marco Beats": { advancePct: 30, balanceDays: 0, paymentTerms: "30 % de adelanto y el resto el día del evento." },
+  "Dulce Encanto Pastelería": { advancePct: 0, balanceDays: 0, paymentTerms: "Se paga todo el día de la entrega." },
+};
+
+/** Solo a los que aún no tienen condiciones: no pisa lo que alguien haya editado. */
+async function cargarCondicionesPago() {
+  for (const [name, c] of Object.entries(CONDICIONES_PAGO)) {
+    await db.update(suppliers).set(c).where(and(eq(suppliers.name, name), isNull(suppliers.advancePct), isNull(suppliers.balanceDays), isNull(suppliers.paymentTerms)));
+  }
+}
 
 async function cargarEmpresa() {
   const r = await db.insert(companySettings).values(EMPRESA_DEMO).onConflictDoNothing({ target: companySettings.id }).returning({ id: companySettings.id });
   if (r.length) console.log("✓ Datos de ejemplo de la empresa (contacto y redes ficticios)");
+  // Empresa ya configurada con el contacto de ejemplo, de antes de la política de cancelación.
+  await db.update(companySettings).set({ cancellationPolicy: EMPRESA_DEMO.cancellationPolicy }).where(and(eq(companySettings.email, EMPRESA_DEMO.email), isNull(companySettings.cancellationPolicy)));
 }
 
 async function cargar() {
@@ -306,7 +324,9 @@ async function cargar() {
   const demo = await db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers).where(inArray(suppliers.name, PROVEEDORES.map((p) => p.name)));
   const archivos = await cargarGalerias(demo);
 
+  await cargarCondicionesPago();
   await cargarCotizacionesDemo();
+  await cargarSaldosDemo();
 
   console.log(nuevos ? `✓ Datos de ejemplo cargados: ${nuevos} proveedores` : "· Proveedores de ejemplo ya cargados");
   if (archivos) console.log(`✓ Galerías de ejemplo: ${archivos} fotos, planos, audios y videos`);
@@ -316,7 +336,8 @@ async function cargar() {
 async function borrar() {
   // La empresa vuelve a "sin configurar" solo si sigue con el contacto de ejemplo.
   await db.delete(companySettings).where(eq(companySettings.email, EMPRESA_DEMO.email));
-  // Las cotizaciones primero: sus días ocupados y líneas apuntan a los proveedores.
+  // Cobros, pagos y ajustes primero (FK restrict hacia la cotización); luego las cotizaciones, cuyos días ocupados y líneas apuntan a los proveedores.
+  await borrarSaldosDemo();
   const cotizaciones = await borrarCotizacionesDemo();
   const proveedores = await db.delete(suppliers).where(inArray(suppliers.name, PROVEEDORES.map((p) => p.name))).returning({ id: suppliers.id });
   for (const p of proveedores) await borrarCarpetaProveedor(p.id);

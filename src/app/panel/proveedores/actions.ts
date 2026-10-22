@@ -1,13 +1,14 @@
 "use server";
 
-import { and, asc, count, eq, ne, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, ne, notExists, sql } from "drizzle-orm";
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/db";
-import { supplierCategories, suppliers } from "@/db/schema";
+import { quoteItems, quoteVersions, quotes, supplierCategories, suppliers } from "@/db/schema";
 import { borrarCarpetaProveedor } from "@/lib/archivos";
 import { audit, requireEquipo } from "@/lib/auth";
+import { ESTADOS_CONGELADOS } from "@/lib/cotizacion/propuesta";
 
 export type EstadoProveedor =
   | {
@@ -113,10 +114,27 @@ export async function actualizarProveedor(id: string, _prev: EstadoProveedor, fo
   return { ok: "Cambios guardados.", valores };
 }
 
+/**
+ * Un proveedor que está en eventos aceptados o cancelados no se borra: su plan y sus pagos dependen de la línea.
+ * La revisión va en la misma sentencia del DELETE para que nadie acepte una cotización entre medio.
+ */
 export async function eliminarProveedor(id: string): Promise<string | void> {
   const yo = await requireEquipo("proveedores.eliminar");
-  const [borrado] = await db.delete(suppliers).where(eq(suppliers.id, id)).returning({ name: suppliers.name });
-  if (!borrado) return "Este proveedor ya no existe.";
+  if (!z.uuid().safeParse(id).success) return "Este proveedor ya no existe.";
+  const enEventos = db
+    .select({ x: sql`1` })
+    .from(quoteItems)
+    .innerJoin(quoteVersions, eq(quoteItems.versionId, quoteVersions.id))
+    .innerJoin(quotes, eq(quoteVersions.quoteId, quotes.id))
+    .where(and(eq(quoteItems.supplierId, id), inArray(quotes.status, [...ESTADOS_CONGELADOS])));
+  const [borrado] = await db
+    .delete(suppliers)
+    .where(and(eq(suppliers.id, id), notExists(enEventos)))
+    .returning({ name: suppliers.name });
+  if (!borrado) {
+    const [sigue] = await db.select({ id: suppliers.id }).from(suppliers).where(eq(suppliers.id, id));
+    return sigue ? "Este proveedor está en eventos aceptados o cancelados. Desactívalo en lugar de eliminarlo." : "Este proveedor ya no existe.";
+  }
   await borrarCarpetaProveedor(id); // fotos, planos y audios de su galería
   await audit({ action: "proveedor.eliminado", userId: yo.id, entity: "proveedor", entityId: id, meta: { nombre: borrado.name } });
   redirect("/panel/proveedores?ok=eliminado");

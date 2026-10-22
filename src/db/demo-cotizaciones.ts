@@ -1,6 +1,6 @@
 /**
  * Cotizaciones de EJEMPLO (solo las usa demo.ts, con SEED_DEMO=true): paquetes de los proveedores de ejemplo,
- * capacidad de los lugares y tres cotizaciones: borrador con dos opciones, enviada con enlace activo y aceptada
+ * capacidad de los lugares y cuatro cotizaciones: borrador con dos opciones, enviada con enlace activo, aceptada
  * con 2 de 5 proveedores confirmados. Todo es idempotente: no duplica lo que ya está.
  * Las cotizaciones de ejemplo llevan «[demo]» al inicio de las notas internas; así se encuentran para borrarlas.
  */
@@ -11,7 +11,7 @@ import { codigoCotizacion, congelarLinea, listaIncluye } from "../lib/cotizacion
 import { db } from "./index";
 import { eventTypes, novaPackages, quoteItems, quoteVersions, quotes, supplierBusy, supplierPackages, suppliers } from "./schema";
 
-const MARCA = "[demo]";
+export const MARCA = "[demo]";
 
 type Paq = [nombre: string, bs: number, porPersona?: true, descripcion?: string];
 
@@ -90,9 +90,9 @@ type CotizacionDemo = {
   invitados: number;
   presupuestoBs: number | null;
   validaDias: number | null;
-  estado: "draft" | "sent" | "accepted";
+  estado: "draft" | "sent" | "accepted" | "cancelled";
   versiones: VersionDemo[];
-  /** Solo aceptada: proveedores ya confirmados. */
+  /** Solo aceptada: proveedores ya confirmados. (Una cancelada ya liberó sus días: no reserva ninguno.) */
   confirmados?: string[];
 };
 
@@ -186,6 +186,29 @@ const COTIZACIONES: CotizacionDemo[] = [
       },
     ],
   },
+  {
+    cliente: "Cumpleaños de Andrés",
+    telefono: "+591 70077788",
+    correo: "familia.andres@demo.test",
+    tipo: "Cumpleaños",
+    diasHasta: 45,
+    inicio: "18:00",
+    fin: "23:00",
+    invitados: 60,
+    presupuestoBs: 15000,
+    validaDias: null,
+    estado: "cancelled",
+    versiones: [
+      {
+        nombre: "Opción única",
+        nova: "Esencia",
+        lineas: [
+          { proveedor: "Jardín del Valle", paquete: "Jardín día completo" },
+          { proveedor: "Dulce Encanto Pastelería", paquete: "Torta de 3 pisos" },
+        ],
+      },
+    ],
+  },
 ];
 
 /* Fechas como texto AAAA-MM-DD (este script corre suelto, sin Next). */
@@ -263,7 +286,7 @@ async function crearCotizacion(c: CotizacionDemo) {
     const [{ max }] = await tx.select({ max: sql<number>`coalesce(max(${quotes.seq}), 0)` }).from(quotes).where(eq(quotes.year, anio));
     const seq = Number(max) + 1;
     const code = codigoCotizacion(anio, seq);
-    const aceptada = c.estado === "accepted";
+    const aceptada = c.estado === "accepted" || c.estado === "cancelled";
     const [q] = await tx
       .insert(quotes)
       .values({
@@ -284,6 +307,7 @@ async function crearCotizacion(c: CotizacionDemo) {
         notes: `${MARCA} Cotización de ejemplo.`,
         status: c.estado,
         acceptedAt: aceptada ? new Date() : null,
+        ...(c.estado === "cancelled" ? { cancelledAt: new Date(), cancelReason: "La familia canceló por motivos de salud." } : {}),
         ...(c.estado === "sent" ? { shareToken: randomBytes(24).toString("base64url"), shareEnabled: true } : {}),
       })
       .returning({ id: quotes.id });
@@ -328,7 +352,7 @@ async function crearCotizacion(c: CotizacionDemo) {
         .set({ frozen: { nombre: np.name, precio: np.priceCents, frase: np.tagline, incluye: listaIncluye(base?.name ?? null, np.includes) } })
         .where(eq(quoteVersions.id, ver.id));
       for (const l of lineas) {
-        const confirmada = c.confirmados?.includes(l.proveedor) ?? false;
+        const confirmada = c.estado === "accepted" && (c.confirmados?.includes(l.proveedor) ?? false);
         let busyId: string | null = null;
         if (confirmada) {
           const [b] = await tx

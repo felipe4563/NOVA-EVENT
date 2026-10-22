@@ -1,19 +1,29 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
-import { and, eq, max, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { refresh } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { paymentMovements, quoteAdjustments, quoteItems, quoteVersions } from "@/db/schema";
-import { ErrorArchivo, MAX_COMPROBANTE, borrarArchivos, guardarComprobante } from "@/lib/archivos";
 import { audit, requireEquipo } from "@/lib/auth";
 import { aCentavos, formatoBs } from "@/lib/cotizacion/dinero";
-import { esFechaValida, hoy as hoyFn } from "@/lib/fechas";
-import { FORMAS_PAGO, codigoRecibo } from "@/lib/saldos/recibo";
+import { hoy as hoyFn } from "@/lib/fechas";
+import { permitidoEnCancelada } from "@/lib/saldos/movimiento";
+import {
+  CANCELADA,
+  type CampoMovimiento,
+  LINEA_NO_EXISTE,
+  NO_ACEPTADA,
+  NO_EXISTE,
+  type TipoMovimiento,
+  type ValoresMovimiento,
+  conComprobante,
+  escribirMovimiento,
+  leerMovimiento,
+  validarMovimiento,
+} from "../movimientos";
 import {
   MENSAJE_PAGOS_PROVEEDOR,
-  type Tx,
   bloquear,
   borrarPlanes,
   cobradoNeto,
@@ -28,15 +38,10 @@ import {
 } from "../planes";
 
 /*
- * Movimientos de dinero de un evento. Todas siguen el mismo camino:
+ * Movimientos de dinero de un evento. Todas siguen el mismo camino (ver ../movimientos.ts):
  * validar → (guardar el comprobante) → transacción: bloquear la cotización, revisar las reglas con sumas frescas, escribir
  * → auditoría → refresh(). Así dos envíos a la vez nunca superan el total: el segundo espera el bloqueo y ve el primero.
  */
-
-const NO_EXISTE = "Esta cotización ya no existe.";
-const LINEA_NO_EXISTE = "Esta línea ya no existe.";
-const CANCELADA = "El evento está cancelado.";
-const NO_ACEPTADA = "La cotización ya no está aceptada.";
 
 const esUuid = (v: string) => z.uuid().safeParse(v).success;
 
@@ -53,112 +58,18 @@ async function cotizacionDeLinea(itemId: string): Promise<string | null> {
 
 /* ── Cobros, devoluciones y pagos a proveedores ───────────────── */
 
-type CampoMovimiento = "monto" | "fecha" | "forma" | "referencia" | "nota" | "comprobante";
 export type EstadoMovimiento =
   | {
       errores?: Partial<Record<CampoMovimiento, string>>;
       error?: string;
       ok?: string;
-      valores?: Partial<Record<Exclude<CampoMovimiento, "comprobante">, string>>;
+      valores?: Partial<ValoresMovimiento>;
       /** Nombre del comprobante elegido: el campo de archivo no se puede volver a llenar solo. */
       archivo?: string;
     }
   | undefined;
 
-type Tipo = "cobro" | "devolucion" | "pago_proveedor" | "devolucion_proveedor";
-
-const esquemaMovimiento = (hoy: string) =>
-  z.object({
-    monto: z
-      .string()
-      .trim()
-      .min(1, { error: "Escribe el monto" })
-      .transform((v, ctx) => {
-        const c = aCentavos(v);
-        if (c === null || c <= 0) {
-          ctx.addIssue({ code: "custom", message: "Monto no válido (ej.: 1.500 o 1.500,50)" });
-          return z.NEVER;
-        }
-        return c;
-      }),
-    fecha: z
-      .string()
-      .refine(esFechaValida, { error: "Elige la fecha" })
-      .refine((f) => f <= hoy, { error: "La fecha no puede ser futura" }),
-    forma: z.enum(FORMAS_PAGO, { error: "Elige la forma de pago" }),
-    referencia: z.string().trim().max(80, { error: "Máximo 80 caracteres" }),
-    nota: z.string().trim().max(300, { error: "Máximo 300 caracteres" }),
-  });
-
-type DatosMovimiento = z.output<ReturnType<typeof esquemaMovimiento>>;
-
-/** Reglas e inserción de cada tipo, dentro de la transacción. Devuelve un texto para rechazar. */
-async function escribirMovimiento(
-  tx: Tx,
-  tipo: Tipo,
-  quoteId: string,
-  itemId: string | null,
-  d: DatosMovimiento,
-  archivo: { fileKey: string; mime: string } | null,
-  yoId: string,
-): Promise<{ id: string; recibo: string | null; proveedor: string | null } | string> {
-  const c = await bloquear(tx, quoteId);
-  if (!c) return NO_EXISTE;
-  const conCancelada = tipo === "devolucion" || tipo === "devolucion_proveedor";
-  if (c.status === "cancelled" && !conCancelada) return CANCELADA;
-  if (c.status !== "accepted" && c.status !== "cancelled") return NO_ACEPTADA;
-
-  let recibo: { receiptYear: number; receiptSeq: number; receiptCode: string } | null = null;
-  let proveedor: string | null = null;
-
-  if (tipo === "cobro") {
-    const falta = (await totalCotizacion(tx, quoteId)) - (await cobradoNeto(tx, quoteId));
-    if (d.monto > falta) return `Supera lo que falta cobrar (${formatoBs(Math.max(0, falta))}).`;
-    // Correlativo por año de la fecha del cobro. El bloqueo de la cotización no ordena cobros de cotizaciones
-    // distintas: este bloqueo por año (se suelta al terminar la transacción) sí. La restricción única es el respaldo.
-    const anio = Number(d.fecha.slice(0, 4));
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`recibo-${anio}`}))`);
-    const [u] = await tx.select({ n: max(paymentMovements.receiptSeq) }).from(paymentMovements).where(eq(paymentMovements.receiptYear, anio));
-    const seq = (u?.n ?? 0) + 1; // los anulados también cuentan: un número nunca se reutiliza
-    recibo = { receiptYear: anio, receiptSeq: seq, receiptCode: codigoRecibo(anio, seq) };
-  } else if (tipo === "devolucion") {
-    const cobrado = await cobradoNeto(tx, quoteId);
-    if (d.monto > cobrado) return `Supera lo cobrado a la pareja (${formatoBs(Math.max(0, cobrado))}).`;
-  } else {
-    const l = itemId ? await lineaAceptada(tx, itemId, c) : null;
-    if (!l) return LINEA_NO_EXISTE;
-    proveedor = l.proveedor;
-    const pagado = await pagadoNetoLinea(tx, l.id);
-    if (tipo === "pago_proveedor") {
-      if (l.payer !== "nova") return "Esta línea la paga la pareja directo al proveedor.";
-      if (l.confirmation !== "confirmed") return "Este proveedor aún no está confirmado.";
-      const falta = l.aPagar - pagado;
-      if (d.monto > falta) return `Supera lo que falta pagar a este proveedor (${formatoBs(Math.max(0, falta))}).`;
-    } else if (d.monto > pagado) {
-      return `Supera lo pagado a este proveedor (${formatoBs(Math.max(0, pagado))}).`;
-    }
-  }
-
-  const [m] = await tx
-    .insert(paymentMovements)
-    .values({
-      quoteId,
-      itemId,
-      kind: tipo,
-      amountCents: d.monto,
-      date: d.fecha,
-      method: d.forma,
-      reference: d.referencia || null,
-      fileKey: archivo?.fileKey ?? null,
-      mime: archivo?.mime ?? null,
-      ...recibo,
-      handledById: yoId,
-      note: d.nota || null,
-      createdById: yoId,
-    })
-    .returning({ id: paymentMovements.id });
-  return { id: m.id, recibo: recibo?.receiptCode ?? null, proveedor };
-}
+type Tipo = TipoMovimiento;
 
 const OK: Record<Tipo, string> = {
   cobro: "Cobro registrado.",
@@ -169,62 +80,32 @@ const OK: Record<Tipo, string> = {
 
 async function registrar(tipo: Tipo, ref: string, formData: FormData): Promise<EstadoMovimiento> {
   const yo = await requireEquipo("saldos.crear");
-  const valores = {
-    monto: String(formData.get("monto") ?? "").trim(),
-    fecha: String(formData.get("fecha") ?? ""),
-    forma: String(formData.get("forma") ?? ""),
-    referencia: String(formData.get("referencia") ?? "").trim(),
-    nota: String(formData.get("nota") ?? "").trim(),
-  };
-  const comprobante = formData.get("comprobante");
-  const hayArchivo = comprobante instanceof File && comprobante.size > 0;
-  const base = { valores, archivo: hayArchivo ? comprobante.name : undefined };
+  const { valores, comprobante } = leerMovimiento(formData);
+  const base = { valores, archivo: comprobante?.name };
 
   const porLinea = tipo === "pago_proveedor" || tipo === "devolucion_proveedor";
   const quoteId = porLinea ? await cotizacionDeLinea(ref) : esUuid(ref) ? ref : null;
   if (!quoteId) return { error: porLinea ? LINEA_NO_EXISTE : NO_EXISTE, ...base };
 
-  const fecha = await hoyFn();
-  const d = esquemaMovimiento(fecha).safeParse(valores);
-  const errores: Partial<Record<CampoMovimiento, string>> = {};
-  if (!d.success) for (const i of d.error.issues) errores[i.path[0] as CampoMovimiento] ??= i.message;
-  if (hayArchivo && comprobante.size > MAX_COMPROBANTE) errores.comprobante = "El comprobante pesa más de 10 MB.";
-  if (!d.success || errores.comprobante) return { errores, ...base };
+  const v = validarMovimiento(valores, comprobante, await hoyFn());
+  if ("errores" in v) return { errores: v.errores, ...base };
+  const d = v.datos;
 
-  // El archivo se guarda antes de la transacción (no se procesa una imagen con la cotización bloqueada)
-  // y se borra si la transacción no escribe nada.
-  let archivo: { fileKey: string; mime: string } | null = null;
-  if (hayArchivo) {
-    try {
-      archivo = await guardarComprobante(quoteId, randomUUID(), Buffer.from(await comprobante.arrayBuffer()));
-    } catch (e) {
-      if (e instanceof ErrorArchivo) return { errores: { comprobante: e.message }, ...base };
-      console.error(e);
-      return { error: "No se pudo guardar el comprobante. Intenta de nuevo.", ...base };
-    }
-  }
-
-  let r: Awaited<ReturnType<typeof escribirMovimiento>>;
-  try {
-    r = await transaccion((tx) => escribirMovimiento(tx, tipo, quoteId, porLinea ? ref : null, d.data, archivo, yo.id));
-  } catch (e) {
-    await borrarArchivos(archivo?.fileKey ?? null);
-    throw e;
-  }
-  if (typeof r === "string") {
-    await borrarArchivos(archivo?.fileKey ?? null);
-    return { error: r, ...base };
-  }
+  const r = await conComprobante(quoteId, comprobante, (archivo) =>
+    transaccion((tx) => escribirMovimiento(tx, tipo, quoteId, porLinea ? ref : null, d, archivo, yo.id)),
+  );
+  if ("errorComprobante" in r) return { errores: { comprobante: r.errorComprobante }, ...base };
+  if ("error" in r) return { error: r.error, ...base };
 
   await audit({
     action: `saldo.${tipo}`,
     userId: yo.id,
     entity: "cotizacion",
     entityId: quoteId,
-    meta: { movimiento: r.id, monto: d.data.monto, fecha: d.data.fecha, forma: d.data.forma, recibo: r.recibo, ...(porLinea ? { linea: ref, proveedor: r.proveedor } : {}) },
+    meta: { movimiento: r.valor.id, monto: d.monto, fecha: d.fecha, forma: d.forma, recibo: r.valor.recibo, ...(porLinea ? { linea: ref, proveedor: r.valor.proveedor } : {}) },
   });
   refresh();
-  return { ok: r.recibo ? `${OK[tipo]} Recibo ${r.recibo}.` : OK[tipo] };
+  return { ok: r.valor.recibo ? `${OK[tipo]} Recibo ${r.valor.recibo}.` : OK[tipo] };
 }
 
 export async function registrarCobro(quoteId: string, _prev: EstadoMovimiento, formData: FormData): Promise<EstadoMovimiento> {
@@ -300,7 +181,10 @@ export async function agregarAjuste(quoteId: string, _prev: EstadoAjuste, formDa
 
 const motivoValido = z.string().trim().min(1, { error: "Escribe el motivo." }).max(200, { error: "El motivo admite hasta 200 caracteres." });
 
-/** Anula un cobro, pago o devolución: queda visible y tachado con su motivo, y deja de contar. */
+/**
+ * Anula un cobro, pago o devolución: queda visible y tachado con su motivo, y deja de contar.
+ * En un evento cancelado solo se anulan devoluciones (para corregir una mal registrada), con las mismas revisiones.
+ */
 export async function anularMovimiento(id: string, motivo: string): Promise<string | void> {
   const yo = await requireEquipo("saldos.eliminar");
   if (!esUuid(id)) return "Este movimiento ya no existe.";
@@ -312,14 +196,14 @@ export async function anularMovimiento(id: string, motivo: string): Promise<stri
   const r = await transaccion(async (tx) => {
     const c = await bloquear(tx, ref.quoteId);
     if (!c) return NO_EXISTE;
-    if (c.status === "cancelled") return CANCELADA;
-    if (c.status !== "accepted") return NO_ACEPTADA;
+    if (c.status !== "accepted" && c.status !== "cancelled") return NO_ACEPTADA;
     const [mov] = await tx
       .update(paymentMovements)
       .set({ voidedAt: new Date(), voidedById: yo.id, voidReason: m.data })
       .where(and(eq(paymentMovements.id, id), sql`${paymentMovements.voidedAt} is null`))
       .returning();
     if (!mov) return "Este movimiento ya está anulado.";
+    if (c.status === "cancelled" && !permitidoEnCancelada(mov.kind)) return CANCELADA;
     // Las sumas se revisan sin el anulado: nunca queda cobrado ni pagado de menos (o de más).
     if (mov.itemId === null) {
       const cobrado = await cobradoNeto(tx, c.id);

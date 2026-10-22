@@ -64,7 +64,9 @@ Las fotos, planos, fotos 360° y audios se guardan en el volumen de Docker `uplo
 
 Los logos de la empresa (*Administración → Empresa*) también van ahí, en `uploads/empresa/`. Se sirven en `/marca/logo-claro.webp`, `/marca/logo-oscuro.webp` y `/marca/icono-*.png`; si no se subió ninguno, se usan los originales de `public/`. El logo claro genera los íconos de la app y es el que usan los PDF.
 
-**Respaldo:** junto con la base de datos, respalda también este volumen:
+Los comprobantes de pago (Saldos) van en `uploads/pagos/<id de la cotización>/` y solo se sirven a quien tiene `saldos.ver`.
+
+**Respaldo:** junto con la base de datos, respalda también este volumen (incluye `uploads/pagos`):
 
 ```bash
 docker run --rm -v nova-event_uploads:/datos -v "$PWD":/respaldo alpine tar czf /respaldo/uploads-$(date +%F).tar.gz -C /datos .
@@ -84,7 +86,18 @@ Módulo para armar propuestas para los clientes (`/panel/cotizaciones`). Cada co
 - **PDF:** la propuesta se descarga en PDF desde el mismo enlace o desde el panel.
 - **Aceptar y confirmar:** al aceptar una opción se congela (cambios posteriores en catálogos no la alteran) y cada proveedor queda «Por confirmar»; al confirmarlo se reserva su día en su calendario.
 - **Permisos:** `cotizaciones.ver`, `.crear`, `.editar` y `.eliminar` (solo equipo; se asignan en Roles). Los paquetes y la capacidad de cada proveedor requieren `proveedores.editar`. El rol Coordinador no los trae por defecto: sin ellos todo el módulo da 403.
-- **Ejemplos (`SEED_DEMO=true`):** se cargan paquetes para los proveedores de ejemplo y tres cotizaciones: *Boda Rojas & Pérez* (borrador con dos opciones), *Quinceaños de Valeria* (enviada, con enlace activo) y *Boda García & Mendoza* (aceptada, con 2 de 5 proveedores confirmados). `npm run db:demo -- --borrar` las quita junto con los días que reservaron.
+- **Ejemplos (`SEED_DEMO=true`):** se cargan paquetes para los proveedores de ejemplo y tres cotizaciones: *Boda Rojas & Pérez* (borrador con dos opciones), *Quinceaños de Valeria* (enviada, con enlace activo) y *Boda García & Mendoza* (aceptada) y *Cumpleaños de Andrés* (cancelada). `npm run db:demo -- --borrar` las quita junto con los días que reservaron.
+
+## Saldos
+
+Módulo de cobros a la pareja y pagos a proveedores (`/panel/saldos`). Todo el dinero va en centavos enteros y los montos propuestos se redondean a bolivianos.
+
+- **Permisos:** `saldos.ver`, `.crear`, `.editar` y `.eliminar` (solo equipo). Cambiar la fecha o cancelar un evento pide además `cotizaciones.editar`. Las condiciones de pago de cada proveedor (adelanto, días del saldo) requieren `proveedores.editar` y la política de cancelación, `empresa.editar`. Sin permiso el módulo da 403 y el Dashboard no muestra sus tarjetas.
+- **Plan de la pareja:** al aceptar una opción se propone Anticipo 30 %, Cuota 1 40 % y Saldo final 30 % (15 días antes del evento); se puede editar. Cada proveedor confirmado que paga Nova Event tiene su propio plan (50 % al confirmar y el resto 7 días antes, o sus condiciones).
+- **Recibos:** cada cobro genera `REC-AAAA-NNNN`, correlativo por año y nunca reutilizado, con PDF. Nada se borra: cobros, pagos, devoluciones y ajustes se anulan con motivo; el recibo anulado queda con su número y dice «ANULADO».
+- **Mis pagos:** en el enlace público de la cotización aceptada (`/p/<código>`) la pareja ve su avance, cuotas y recibos. Nunca ve pagos a proveedores, comprobantes ni notas internas. Se oculta con «Mostrar pagos en el enlace».
+- **Comprobantes:** imagen o PDF de hasta 10 MB (las imágenes se guardan como WebP), en `uploads/pagos/`. **Respalda esa carpeta** junto con la base de datos (ver *Archivos subidos*).
+- **Ejemplos (`SEED_DEMO=true`):** *Boda García & Mendoza* con plan 30/40/30, anticipo (QR) y Cuota 1 (transferencia) cobrados, un descuento por referido, un proveedor pagado por la pareja y tres con plan (uno al día, uno vencido, uno pendiente); y *Cumpleaños de Andrés*, cancelado con un cobro y una devolución parcial. `npm run db:demo -- --borrar` los quita.
 
 ## Estructura
 

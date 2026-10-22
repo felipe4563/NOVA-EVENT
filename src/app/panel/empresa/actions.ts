@@ -8,6 +8,7 @@ import { ErrorArchivo, MAX_LOGO, borrarLogo, guardarLogo, type TipoLogo } from "
 import { audit, requireEquipo } from "@/lib/auth";
 import { EMPRESA_POR_DEFECTO } from "@/lib/empresa";
 import { enlaceRed, enlaceWeb, enlaceWhatsApp } from "@/lib/empresa-enlaces";
+import { unirSaltos } from "@/lib/texto";
 
 type Campo =
   | "nombre"
@@ -56,7 +57,7 @@ const esquema = z
 
 export async function guardarEmpresa(_prev: EstadoEmpresa, formData: FormData): Promise<EstadoEmpresa> {
   const yo = await requireEquipo("empresa.editar");
-  const valores = Object.fromEntries(CAMPOS.map((c) => [c, String(formData.get(c) ?? "").trim()])) as Record<Campo, string>;
+  const valores = Object.fromEntries(CAMPOS.map((c) => [c, unirSaltos(String(formData.get(c) ?? "")).trim()])) as Record<Campo, string>;
   const datos = esquema.safeParse(valores);
   if (!datos.success) {
     const errores: Partial<Record<Campo, string>> = {};

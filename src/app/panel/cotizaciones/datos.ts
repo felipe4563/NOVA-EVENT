@@ -17,7 +17,7 @@ import {
 } from "@/db/schema";
 import { totalesVersion } from "@/lib/cotizacion/calculo";
 import { estadoDisponibilidad, rangosOcupados } from "@/lib/cotizacion/disponibilidad";
-import { esTokenValido, leerLineaCongelada, leerVersionCongelada, listaIncluye, versionesVisibles } from "@/lib/cotizacion/propuesta";
+import { esTokenValido, estaCongelada, leerLineaCongelada, leerVersionCongelada, listaIncluye, versionesVisibles } from "@/lib/cotizacion/propuesta";
 import { contactoEmpresa, datosEmpresa } from "@/lib/empresa";
 import { horario as textoHorario } from "@/lib/fechas";
 import { infoVideo } from "@/lib/videos";
@@ -245,7 +245,7 @@ async function mediosDe(ids: string[], url: (clave: string) => string): Promise<
 
 /**
  * Lo que ven los novios. Solo las versiones marcadas «mostrar en la propuesta»;
- * si está aceptada, solo la aceptada con sus copias congeladas. Nunca notas, contactos ni agenda.
+ * si está aceptada (o cancelada), solo la aceptada con sus copias congeladas. Nunca notas, contactos ni agenda.
  * Las direcciones de archivos se arman con `url` (en el panel /archivos, en el enlace público la ruta con token).
  */
 export async function datosPropuesta(quoteId: string, url: (clave: string) => string): Promise<Propuesta | null> {
@@ -253,7 +253,7 @@ export async function datosPropuesta(quoteId: string, url: (clave: string) => st
   if (!datos) return null;
   const { cotizacion: c, tipo } = datos;
   const versiones = versionesVisibles(c, datos.versiones);
-  const aceptada = c.status === "accepted" ? versiones[0] : undefined;
+  const aceptada = estaCongelada(c.status) ? versiones[0] : undefined;
   const lineas = versiones.flatMap((v) => v.lineas);
   const idsProv = [...new Set(lineas.flatMap((l) => (l.supplierId ? [l.supplierId] : [])))];
   const idsPaq = [...new Set(lineas.flatMap((l) => (l.supplierPackageId ? [l.supplierPackageId] : [])))];

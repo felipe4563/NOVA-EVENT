@@ -2,8 +2,8 @@ import "server-only";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { paymentInstallments, paymentMovements, quoteAdjustments, quoteItems, quoteVersions, quotes, suppliers } from "@/db/schema";
-import { leerLineaCongelada, leerVersionCongelada } from "@/lib/cotizacion/propuesta";
-import { ajustarAlTotal, proponerPlanPareja, proponerPlanProveedor, totalACobrar } from "@/lib/saldos/plan";
+import { leerLineaCongelada } from "@/lib/cotizacion/propuesta";
+import { ajustarAlTotal, proponerPlanPareja, proponerPlanProveedor, totalCongelado } from "@/lib/saldos/plan";
 
 /** Escritura de planes de pago. Siempre dentro de una transacción con la cotización ya bloqueada. */
 export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -40,12 +40,12 @@ export async function totalCotizacion(tx: Tx, quoteId: string): Promise<number> 
   if (!c?.acceptedVersionId) return 0;
   const [[v], lineas, ajustes] = await Promise.all([
     tx.select({ frozen: quoteVersions.frozen }).from(quoteVersions).where(eq(quoteVersions.id, c.acceptedVersionId)),
-    tx.select({ supplierId: quoteItems.supplierId, payer: quoteItems.payer, frozen: quoteItems.frozen }).from(quoteItems).where(eq(quoteItems.versionId, c.acceptedVersionId)),
+    tx.select({ payer: quoteItems.payer, frozen: quoteItems.frozen }).from(quoteItems).where(eq(quoteItems.versionId, c.acceptedVersionId)),
     tx.select({ amountCents: quoteAdjustments.amountCents }).from(quoteAdjustments).where(and(eq(quoteAdjustments.quoteId, quoteId), isNull(quoteAdjustments.voidedAt))),
   ]);
-  return totalACobrar(
-    leerVersionCongelada(v?.frozen)?.precio ?? null,
-    lineas.map((l) => ({ total: leerLineaCongelada(l.frozen)?.total ?? 0, paga: l.supplierId ? l.payer : ("nova" as const) })),
+  return totalCongelado(
+    v?.frozen,
+    lineas,
     ajustes.map((a) => a.amountCents),
   );
 }

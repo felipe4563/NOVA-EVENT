@@ -5,8 +5,10 @@ import { z } from "zod";
 import { MAX_COMPROBANTE } from "@/lib/archivos";
 import { requireEquipo } from "@/lib/auth";
 import { formatoBs } from "@/lib/cotizacion/dinero";
-import { fechaCorta, fechaLarga, hoy as hoyFn } from "@/lib/fechas";
+import { datosEmpresa } from "@/lib/empresa";
+import { fechaCorta, fechaLarga, horario, hoy as hoyFn, sumarDias } from "@/lib/fechas";
 import { hasPermission } from "@/lib/permissions";
+import { permitidoEnCancelada } from "@/lib/saldos/movimiento";
 import { ETIQUETA_FORMA } from "@/lib/saldos/recibo";
 import { IconoAccion } from "@/components/iconos";
 import { Encabezado, Insignia, clases, formatoFecha } from "@/components/ui";
@@ -14,7 +16,10 @@ import { cuentaEvento, type CuentaEvento, type MovimientoCuenta, type ProveedorC
 import { InsigniaCuota } from "../insignia-cuota";
 import { AgregarAjuste } from "./_componentes/ajuste";
 import { Anular } from "./_componentes/anular";
+import { CambiarFecha } from "./_componentes/cambiar-fecha";
+import { Cancelar } from "./_componentes/cancelar";
 import { EditarPlan } from "./_componentes/editor-plan";
+import { MostrarPagos } from "./_componentes/mostrar-pagos";
 import { MontoProveedor, QuienPaga } from "./_componentes/proveedor";
 import { Registrar } from "./_componentes/registrar";
 
@@ -33,6 +38,9 @@ export default async function SaldoEventoPage({ params }: PageProps<"/panel/sald
   const { cotizacion: c } = cuenta;
   const cancelada = c.status === "cancelled";
   const p: Permisos = { crear: hasPermission(yo, "saldos.crear"), editar: hasPermission(yo, "saldos.editar"), eliminar: hasPermission(yo, "saldos.eliminar") };
+  // Cambiar fecha y cancelar tocan también la cotización: piden además «Cotizaciones: editar».
+  const delEvento = p.editar && hasPermission(yo, "cotizaciones.editar") && c.status === "accepted";
+  const politica = delEvento ? (await datosEmpresa()).politica : null;
 
   return (
     <div className="w-full space-y-5">
@@ -58,8 +66,36 @@ export default async function SaldoEventoPage({ params }: PageProps<"/panel/sald
             hoy={hoy}
           />
         )}
-        {/* Aquí van «Cambiar fecha» / «Cancelar evento» (Tarea 9). */}
+        {delEvento && (
+          <>
+            <CambiarFecha
+              quoteId={c.id}
+              fechaActual={fechaLarga(c.eventDate)}
+              horarioActual={horario(c.startTime, c.endTime)}
+              manana={sumarDias(hoy, 1)}
+              puedeAjustar={p.crear}
+            />
+            <Cancelar
+              quoteId={c.id}
+              codigo={c.code}
+              hoy={hoy}
+              maxBytes={MAX_COMPROBANTE}
+              resumen={{
+                cobrado: cuenta.cobrado,
+                anticipo: cuenta.cuotas[0] ? { nombre: cuenta.cuotas[0].nombre, monto: cuenta.cuotas[0].monto } : null,
+                pagadoProveedores: cuenta.pagadoProveedores,
+                politica,
+              }}
+            />
+          </>
+        )}
       </Encabezado>
+
+      {p.editar ? (
+        <MostrarPagos quoteId={c.id} activo={c.showPayments} />
+      ) : (
+        <p className="text-sm text-texto-suave">Pagos en el enlace de la pareja: {c.showPayments ? "visibles" : "ocultos"}</p>
+      )}
 
       {cancelada && (
         <div role="status" className="rounded-xl bg-error/10 px-4 py-3 text-sm text-error ring-1 ring-error/30 ring-inset">
@@ -130,7 +166,6 @@ function CobrosPareja({ cuenta: k, p, hoy }: { cuenta: CuentaEvento; p: Permisos
   const cancelada = c.status === "cancelled";
   const falta = Math.max(0, k.total - k.cobrado);
   const proxima = k.cuotas.find((q) => q.falta > 0);
-  const anulables = p.eliminar && !cancelada;
 
   return (
     <section aria-labelledby="cobros-titulo" className={`${clases.tarjeta} p-4 sm:px-6`}>
@@ -219,7 +254,7 @@ function CobrosPareja({ cuenta: k, p, hoy }: { cuenta: CuentaEvento; p: Permisos
                     {a.monto < 0 ? "−" : "+"}
                     {formatoBs(Math.abs(a.monto))}
                   </span>
-                  {a.anulado ? <Insignia>Anulado</Insignia> : anulables && <Anular id={a.id} que="ajuste" descripcion={`${a.concepto} (${a.monto < 0 ? "−" : "+"}${formatoBs(Math.abs(a.monto))})`} />}
+                  {a.anulado ? <Insignia>Anulado</Insignia> : p.eliminar && !cancelada && <Anular id={a.id} que="ajuste" descripcion={`${a.concepto} (${a.monto < 0 ? "−" : "+"}${formatoBs(Math.abs(a.monto))})`} />}
                 </div>
               </li>
             ))}
@@ -231,7 +266,7 @@ function CobrosPareja({ cuenta: k, p, hoy }: { cuenta: CuentaEvento; p: Permisos
       {k.movimientos.length ? (
         <ul className="mt-1 divide-y divide-borde">
           {k.movimientos.map((m) => (
-            <FilaMovimiento key={m.id} m={m} anulable={anulables} quoteId={k.cotizacion.id} />
+            <FilaMovimiento key={m.id} m={m} anulable={anulable(p, cancelada, m)} quoteId={k.cotizacion.id} />
           ))}
         </ul>
       ) : (
@@ -249,6 +284,9 @@ const TIPO_MOVIMIENTO: Record<MovimientoCuenta["kind"], { texto: string; quien: 
   pago_proveedor: { texto: "Pago", quien: "Pagó", sale: false },
   devolucion_proveedor: { texto: "Devolución del proveedor", quien: "Recibió", sale: true },
 };
+
+/** Con saldos.eliminar; en una cancelada solo las devoluciones (para corregir una mal registrada). */
+const anulable = (p: Permisos, cancelada: boolean, m: MovimientoCuenta) => p.eliminar && (!cancelada || permitidoEnCancelada(m.kind));
 
 /** `quoteId` solo en los de la pareja: es donde hay recibos que abrir. */
 function FilaMovimiento({ m, anulable, quoteId }: { m: MovimientoCuenta; anulable: boolean; quoteId?: string }) {
@@ -315,7 +353,9 @@ function PagosProveedores({ cuenta: k, p, hoy }: { cuenta: CuentaEvento; p: Perm
 function EstadoProveedor({ l, hoy, cancelada }: { l: ProveedorCuenta; hoy: string; cancelada: boolean }) {
   if (l.paga === "client") return <span className="text-sm text-texto-suave">Lo paga la pareja directo</span>;
   if (l.confirmacion === "unavailable") return <Insignia tono="error">No disponible</Insignia>;
-  if (l.confirmacion !== "confirmed") return <span className="text-sm text-texto-suave">Se arma al confirmar al proveedor</span>;
+  // Quedó «Por confirmar» (p. ej. al cambiar la fecha) con plan o pagos: se conservan y se muestran.
+  if (l.confirmacion !== "confirmed")
+    return l.cuotas.length || l.movimientos.length ? <Insignia tono="oro">Por confirmar</Insignia> : <span className="text-sm text-texto-suave">Se arma al confirmar al proveedor</span>;
   if (cancelada) return null;
   if (l.adelantoUrgente) return <Insignia tono="error">Adelanto urgente</Insignia>;
   const proxima = l.cuotas.find((q) => q.falta > 0);
@@ -327,9 +367,10 @@ function EstadoProveedor({ l, hoy, cancelada }: { l: ProveedorCuenta; hoy: strin
 function FilaProveedor({ l, p, hoy, cancelada }: { l: ProveedorCuenta; p: Permisos; hoy: string; cancelada: boolean }) {
   const nova = l.paga === "nova";
   const confirmado = nova && l.confirmacion === "confirmed";
+  // Una línea que volvió a «Por confirmar» conserva su plan y sus pagos: se ven, pero no se editan ni se paga más.
+  const conPlan = nova && (confirmado || l.cuotas.length > 0 || l.movimientos.length > 0);
   const falta = Math.max(0, l.aPagar - l.pagado);
   const proxima = l.cuotas.find((q) => q.falta > 0);
-  const anulables = p.eliminar && !cancelada;
   const sinBotones = !(p.crear && ((!cancelada && confirmado && falta > 0) || l.pagado > 0)) && !(p.editar && !cancelada);
 
   return (
@@ -340,6 +381,7 @@ function FilaProveedor({ l, p, hoy, cancelada }: { l: ProveedorCuenta; p: Permis
           <div className="min-w-0">
             <p className="font-medium break-words text-texto">{l.proveedor}</p>
             <p className="text-xs break-words text-texto-suave">
+              {l.eliminado ? "(proveedor eliminado) · " : ""}
               {l.etiqueta !== l.proveedor ? `${l.etiqueta} · ` : ""}
               {nova ? l.condicion : `Total ${formatoBs(l.totalLinea)}`}
             </p>
@@ -360,12 +402,18 @@ function FilaProveedor({ l, p, hoy, cancelada }: { l: ProveedorCuenta; p: Permis
           <p className="text-sm text-texto-suave">
             La pareja le paga {formatoBs(l.totalLinea)} directo al proveedor: no entra en el total a cobrar.
           </p>
-        ) : !confirmado ? (
+        ) : !conPlan ? (
           <p className="text-sm text-texto-suave">
             {l.confirmacion === "unavailable" ? "El proveedor no está disponible." : "El plan de pagos se arma al confirmar al proveedor en la cotización."}
           </p>
         ) : (
           <>
+            {!confirmado && (
+              <p className="text-sm text-texto-suave">
+                {l.confirmacion === "unavailable" ? "El proveedor no está disponible." : "El proveedor quedó por confirmar."} Su plan y sus pagos se conservan; para seguir pagándole,
+                confírmalo de nuevo en la cotización.
+              </p>
+            )}
             {l.cuotas.length ? (
               <ul className={`divide-y divide-borde ${cancelada ? "opacity-60" : ""}`}>
                 {l.cuotas.map((q) => (
@@ -391,7 +439,7 @@ function FilaProveedor({ l, p, hoy, cancelada }: { l: ProveedorCuenta; p: Permis
               Monto a pagar <span className="font-medium text-texto tabular-nums">{formatoBs(l.aPagar)}</span>
               {l.aPagar !== l.totalLinea && <> (en la cotización: {formatoBs(l.totalLinea)})</>}
             </p>
-            {p.editar && !cancelada && (
+            {p.editar && !cancelada && confirmado && (
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                 <EditarPlan
                   tipo="proveedor"
@@ -411,7 +459,7 @@ function FilaProveedor({ l, p, hoy, cancelada }: { l: ProveedorCuenta; p: Permis
         {l.movimientos.length > 0 && (
           <ul className="divide-y divide-borde border-t border-borde">
             {l.movimientos.map((m) => (
-              <FilaMovimiento key={m.id} m={m} anulable={anulables} />
+              <FilaMovimiento key={m.id} m={m} anulable={anulable(p, cancelada, m)} />
             ))}
           </ul>
         )}

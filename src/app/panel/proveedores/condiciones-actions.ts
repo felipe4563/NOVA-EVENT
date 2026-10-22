@@ -6,6 +6,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { suppliers } from "@/db/schema";
 import { audit, requireEquipo } from "@/lib/auth";
+import { unirSaltos } from "@/lib/texto";
 
 type Campo = "adelanto" | "dias" | "nota";
 
@@ -35,7 +36,7 @@ export async function guardarCondiciones(supplierId: string, _prev: EstadoCondic
     adelanto: String(formData.get("adelanto") ?? "").trim(),
     dias: String(formData.get("dias") ?? "").trim(),
     momento: String(formData.get("momento") ?? "antes"),
-    nota: String(formData.get("nota") ?? "").trim(),
+    nota: unirSaltos(String(formData.get("nota") ?? "")).trim(),
   };
   if (!z.uuid().safeParse(supplierId).success) return { error: "Este proveedor ya no existe.", valores };
   const d = esquema.safeParse(valores);

@@ -18,7 +18,8 @@ export type DatosRecibo = {
   referencia: string | null;
   total: number;
   pagado: number;
-  saldo: number;
+  /** null en un evento cancelado: no se muestra la línea «Saldo». */
+  saldo: number | null;
   recibidoPor: string | null;
   anulado: boolean;
   empresa: ContactoEmpresa;
@@ -88,10 +89,12 @@ export async function documentoRecibo(r: DatosRecibo): Promise<Buffer> {
             <Text style={s.suave}>Pagado a la fecha (incluye este recibo)</Text>
             <Text style={{ fontWeight: 600 }}>{formatoBs(r.pagado)}</Text>
           </View>
-          <View style={[s.fila, { marginTop: 9, paddingTop: 9, borderTopWidth: 0.75, borderTopColor: C.oro300 }]}>
-            <Text style={{ fontFamily: "Cinzel", fontSize: 12, color: C.vino700 }}>Saldo</Text>
-            <Text style={{ fontFamily: "Cinzel", fontSize: 15, color: C.vino600 }}>{formatoBs(r.saldo)}</Text>
-          </View>
+          {r.saldo !== null && (
+            <View style={[s.fila, { marginTop: 9, paddingTop: 9, borderTopWidth: 0.75, borderTopColor: C.oro300 }]}>
+              <Text style={{ fontFamily: "Cinzel", fontSize: 12, color: C.vino700 }}>Saldo</Text>
+              <Text style={{ fontFamily: "Cinzel", fontSize: 15, color: C.vino600 }}>{formatoBs(r.saldo)}</Text>
+            </View>
+          )}
         </View>
 
         {r.recibidoPor && (

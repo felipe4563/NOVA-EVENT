@@ -2,6 +2,7 @@
  * Planes de pago y estado de las cuotas. Todo en centavos enteros y fechas "AAAA-MM-DD".
  * Lógica pura: "hoy" siempre llega como texto, nunca se lee del reloj.
  */
+import { leerLineaCongelada, leerVersionCongelada } from "@/lib/cotizacion/propuesta";
 import { diasEntre, sumarDias } from "@/lib/fechas";
 import { aBs, cubrirCuotas } from "./reparto";
 
@@ -97,4 +98,23 @@ export function correrFechas<T extends Cuota>(cuotas: T[], pagado: number, dias:
 export function totalACobrar(nova: number | null, lineas: { total: number; paga: "nova" | "client" }[], ajustes: number[]): number {
   const delasLineas = lineas.reduce((s, l) => s + (l.paga === "nova" ? l.total : 0), 0);
   return (nova ?? 0) + delasLineas + ajustes.reduce((s, a) => s + a, 0);
+}
+
+/**
+ * Total a cobrar de un evento con las copias congeladas de la versión aceptada.
+ * Quién paga cada línea es siempre `payer`: no depende de que el proveedor siga existiendo
+ * (borrarlo deja `supplierId` en null y no debe cambiar el total). Una línea sin proveedor desde el inicio ya es «nova».
+ */
+export function totalCongelado(versionCongelada: unknown, lineas: { frozen: unknown; payer: "nova" | "client" }[], ajustes: number[]): number {
+  return totalACobrar(
+    leerVersionCongelada(versionCongelada)?.precio ?? null,
+    lineas.map((l) => ({ total: leerLineaCongelada(l.frozen)?.total ?? 0, paga: l.payer })),
+    ajustes,
+  );
+}
+
+/** El adelanto al proveedor (su primera cuota, en orden) vence hoy o ya venció y le falta algo. Las cuotas llegan ordenadas. */
+export function adelantoVencido(cuotas: { vence: string; falta: number }[], hoy: string): boolean {
+  const adelanto = cuotas[0];
+  return !!adelanto && adelanto.falta > 0 && adelanto.vence <= hoy;
 }

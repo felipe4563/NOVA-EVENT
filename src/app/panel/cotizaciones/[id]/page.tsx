@@ -9,7 +9,7 @@ import { fechaLarga, hoy as hoyFn, horario, hora } from "@/lib/fechas";
 import { origenDe } from "@/lib/origen";
 import { hasPermission } from "@/lib/permissions";
 import { totalesVersion } from "@/lib/cotizacion/calculo";
-import { leerLineaCongelada, leerVersionCongelada } from "@/lib/cotizacion/propuesta";
+import { estaCongelada, leerLineaCongelada, leerVersionCongelada } from "@/lib/cotizacion/propuesta";
 import { IconoAccion } from "@/components/iconos";
 import { Encabezado, Insignia, clases } from "@/components/ui";
 import Link from "next/link";
@@ -51,14 +51,17 @@ export default async function CotizacionPage({ params, searchParams }: PageProps
   const { cotizacion: c, tipo, versiones } = datos;
   const sp = await searchParams;
   const hoy = await hoyFn();
-  const cuenta = c.status === "accepted" || c.status === "cancelled" ? await cuentaEvento(id, hoy) : null;
+  // Lo cobrado es de Saldos: solo lo ve quien tiene saldos.ver.
   const verSaldos = hasPermission(yo, "saldos.ver");
+  const cuenta = verSaldos && estaCongelada(c.status) ? await cuentaEvento(id, hoy) : null;
   const aceptada = c.status === "accepted";
+  // Una cancelada queda como registro: de solo lectura, con la versión que se había aceptado.
+  const cancelada = c.status === "cancelled";
   const conEditar = hasPermission(yo, "cotizaciones.editar");
-  const puedeEditar = conEditar && !aceptada;
+  const puedeEditar = conEditar && !aceptada && !cancelada;
   const invitados = c.guests ?? 0;
   const horarioEvento = { inicio: c.startTime, fin: c.endTime };
-  const versionAceptada = aceptada ? versiones.find((v) => v.id === c.acceptedVersionId) : undefined;
+  const versionAceptada = estaCongelada(c.status) ? versiones.find((v) => v.id === c.acceptedVersionId) : undefined;
   // Días ocupados creados por las confirmaciones de esta cotización (no cuentan como conflicto).
   const propios = versionAceptada?.lineas.flatMap((l) => (l.busyId ? [l.busyId] : [])) ?? [];
 
@@ -72,7 +75,8 @@ export default async function CotizacionPage({ params, searchParams }: PageProps
     puedeEditar ? opcionesProveedores(null, c.eventDate, horarioEvento, invitados) : Promise.resolve([]),
     proveedoresDeLineas(idsLineas),
     // Se recalcula en cada visita: si cambia la fecha o el horario, los avisos se actualizan solos.
-    disponibilidadDe(idsLineas, c.eventDate, horarioEvento, propios),
+    // En una cancelada no hay fecha que reservar: sin avisos de disponibilidad.
+    disponibilidadDe(cancelada ? [] : idsLineas, c.eventDate, horarioEvento, propios),
     fechasDeOcupados(propios),
     puedeEditar ? paquetesVigentes(idsPaquetes) : Promise.resolve(new Set<string>()),
   ]);
@@ -89,7 +93,7 @@ export default async function CotizacionPage({ params, searchParams }: PageProps
     name: v.name,
     visible: v.showInProposal,
     total: totalesDe(v).general,
-    estado: aceptada ? (esCongelada(v) ? ("aceptada" as const) : ("archivada" as const)) : undefined,
+    estado: versionAceptada ? (esCongelada(v) ? ("aceptada" as const) : ("archivada" as const)) : undefined,
   }));
   const fzActiva = activa ? novaCongelada(activa) : null;
 
@@ -142,7 +146,7 @@ export default async function CotizacionPage({ params, searchParams }: PageProps
         </span>
       </Encabezado>
 
-      {puedeEditar && c.status !== "cancelled" && (
+      {puedeEditar && (
         <div className="mb-5">
           <BarraEstado quoteId={id} status={c.status} versiones={pestanas.map((p) => ({ id: p.id, name: p.name, total: p.total }))} activaId={activa?.id ?? null} />
         </div>
@@ -151,14 +155,21 @@ export default async function CotizacionPage({ params, searchParams }: PageProps
       {cuenta && (
         <p className="mb-5 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-xl border border-borde bg-superficie px-4 py-3 text-sm text-texto">
           <span className="tabular-nums">
-            Cobrado {formatoBs(cuenta.cobrado)} de {formatoBs(cuenta.total)} · falta {formatoBs(Math.max(0, cuenta.total - cuenta.cobrado))}
+            {cancelada
+              ? `Cobrado ${formatoBs(cuenta.cobrado)}${cuenta.devuelto > 0 ? ` · devuelto ${formatoBs(cuenta.devuelto)}` : ""}`
+              : `Cobrado ${formatoBs(cuenta.cobrado)} de ${formatoBs(cuenta.total)} · falta ${formatoBs(Math.max(0, cuenta.total - cuenta.cobrado))}`}
           </span>
-          {verSaldos && (
-            <Link href={`/panel/saldos/${id}`} className="font-medium text-enlace hover:text-titulo">
-              Ver saldos ›
-            </Link>
-          )}
+          <Link href={`/panel/saldos/${id}`} className="font-medium text-enlace hover:text-titulo">
+            Ver saldos ›
+          </Link>
         </p>
+      )}
+
+      {cancelada && (
+        <div role="status" className="mb-5 rounded-xl bg-error/10 px-4 py-3 text-sm text-error ring-1 ring-error/30 ring-inset">
+          <p className="font-semibold">Cancelada{c.cancelledAt ? ` el ${fechaLarga(diaDe(c.cancelledAt))}` : ""}. Queda como registro: ya no se modifica.</p>
+          {c.cancelReason && <p className="mt-0.5 break-words">Motivo: {c.cancelReason}</p>}
+        </div>
       )}
 
       {aceptada && (
@@ -229,7 +240,7 @@ export default async function CotizacionPage({ params, searchParams }: PageProps
             <p className={`${clases.tarjeta} p-6 text-sm text-texto-suave`}>Esta cotización no tiene versiones.</p>
           )}
 
-          <ZonaDelicada quoteId={id} codigo={c.code} aceptada={aceptada} liberar={liberar} dia={diaEvento} {...zona} />
+          {!cancelada && <ZonaDelicada quoteId={id} codigo={c.code} aceptada={aceptada} liberar={liberar} dia={diaEvento} {...zona} />}
         </div>
 
         {resumen && (

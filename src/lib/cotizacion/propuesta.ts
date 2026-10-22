@@ -14,16 +14,24 @@ export function archivosPermitidos(proveedoresVisibles: string[], claves: string
   }));
 }
 
+/** Estados con la versión aceptada congelada: una cancelada lo fue antes de cancelarse y conserva sus precios. */
+export const ESTADOS_CONGELADOS = ["accepted", "cancelled"] as const;
+
+/** ¿Usa la versión aceptada con sus copias congeladas (nombres y montos de cuando se aceptó)? */
+export function estaCongelada(status: string): boolean {
+  return (ESTADOS_CONGELADOS as readonly string[]).includes(status);
+}
+
 /**
  * Versiones que ve el cliente (propuesta, enlace público y sus archivos):
- * si está aceptada, solo la versión aceptada (si no se encuentra, ninguna; nunca las demás);
+ * si está aceptada o cancelada, solo la versión aceptada (si no se encuentra, ninguna; nunca las demás);
  * si no, las marcadas «mostrar en la propuesta».
  */
 export function versionesVisibles<V extends { id: string; showInProposal: boolean }>(
   cotizacion: { status: string; acceptedVersionId: string | null },
   versiones: V[],
 ): V[] {
-  if (cotizacion.status === "accepted") return versiones.filter((v) => v.id === cotizacion.acceptedVersionId);
+  if (estaCongelada(cotizacion.status)) return versiones.filter((v) => v.id === cotizacion.acceptedVersionId);
   return versiones.filter((v) => v.showInProposal);
 }
 
