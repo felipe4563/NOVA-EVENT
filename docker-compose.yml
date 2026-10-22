@@ -61,7 +61,8 @@ services:
       # Fotos, planos y audios de la galería: incluir en los respaldos
       - uploads:/app/uploads
     ports:
-      - "${APP_PORT:-3000}:3000"
+      # Solo dentro del servidor: se entra por Nginx/Caddy con HTTPS
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
     depends_on:
       migrate:
         condition: service_completed_successfully
